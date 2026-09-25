@@ -30,7 +30,7 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = "http://127.0.0.1:%d" % server.server_port
     call("POST", base + "/plan", json.dumps({"partitions": spec["partitions"]}).encode())
-    call("POST", base + "/prioritize", json.dumps({"loads": spec["loads"]}).encode())
+    priority = parse(call("POST", base + "/prioritize", json.dumps({"loads": spec["loads"]}).encode())[1])
     rounds = []
     for _ in range(spec["rounds"]):
         rounds.append(parse(call("POST", base + "/step", b"{}")[1]))
@@ -39,15 +39,18 @@ def main() -> int:
     call("POST", base + "/resume", b"{}")
     resumed = parse(call("POST", base + "/step", b"{}")[1])
     stats = parse(call("GET", base + "/")[1])
+    done = stats.get("done") or []
+    total = len(spec["partitions"])
+    invariant = len(done) + stats.get("pending", -1) == total and len(set(done)) == len(done)
     print("每轮迁移的分区数 =", [item.get("migrated") for item in rounds])
     print("暂停时是否迁移 =", paused.get("migrated"))
     print("恢复后的迁移数 =", resumed.get("migrated"))
-    print("迁移优先级顺序 =", spec["priority_order"])
+    print("迁移优先级顺序 =", priority)
     print("剩余待迁分区 =", stats.get("pending"))
     print("已完成迁移 =", stats.get("done"))
     print("限速（每轮上限） =", stats.get("rate"))
-    print("不变量（迁移总量守恒） =", spec["conservation_invariant"])
-    print("分区数 =", len(spec["partitions"]))
+    print("不变量（迁移总量守恒） =", invariant)
+    print("分区数 =", total)
     server.shutdown()
     return 0
 
