@@ -1,5 +1,9 @@
-"""zonebalance.py：分区迁移（基线：一次全搬）。"""
+"""zonebalance.py：分区迁移（登记、限速、可暂停、可持久化）。"""
 from __future__ import annotations
+
+import json
+
+STATE_PATH = "zonebalance_state.json"
 
 
 class Mover:
@@ -11,23 +15,54 @@ class Mover:
         self.rounds = 0
 
     def plan(self, partitions) -> dict:
-        """基线：把待迁清单记下来，然后一次全搬。"""
+        """只登记待迁分区，不直接迁移。"""
         self.pending = list(partitions)
-        self.done = list(self.pending)
-        self.pending = []
-        return {"planned": len(self.done), "remaining": 0}
+        self.done = []
+        return {"planned": len(self.pending), "remaining": len(self.pending)}
 
-    def prioritize(self, loads) -> dict:
-        raise NotImplementedError("按负载排序还没实现")
+    def prioritize(self, loads) -> list:
+        """按负载降序（同负载按分区名升序）重排待迁清单，返回优先级顺序。"""
+        loads = loads or {}
+        self.pending.sort(key=lambda name: (-loads.get(name, 0), name))
+        return list(self.pending)
 
     def step(self) -> dict:
-        raise NotImplementedError("限速迁移还没实现")
+        """每轮最多迁移 rate 个分区；暂停期间不迁移。"""
+        self.rounds += 1
+        if self.paused:
+            return {"migrated": 0, "done": len(self.done)}
+        batch = self.pending[:self.rate]
+        self.pending = self.pending[len(batch):]
+        self.done.extend(batch)
+        return {"migrated": len(batch), "done": len(self.done)}
 
     def pause(self) -> dict:
-        raise NotImplementedError("暂停还没实现")
+        self.paused = True
+        return {"paused": True}
 
     def resume(self) -> dict:
-        raise NotImplementedError("恢复还没实现")
+        self.paused = False
+        return {"paused": False}
+
+    def persist(self, path: str = STATE_PATH) -> dict:
+        """把待迁清单、已迁集合与暂停状态落盘，返回快照。"""
+        blob = {"rate": self.rate, "pending": list(self.pending),
+                "done": list(self.done), "paused": self.paused,
+                "rounds": self.rounds}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(blob, handle)
+        return blob
+
+    def restore(self, blob) -> dict:
+        """从快照恢复，待迁清单、已迁集合与暂停状态与重启前一致。"""
+        if isinstance(blob, (str, bytes)):
+            blob = json.loads(blob)
+        self.rate = blob.get("rate", self.rate)
+        self.pending = list(blob.get("pending", []))
+        self.done = list(blob.get("done", []))
+        self.paused = bool(blob.get("paused", False))
+        self.rounds = blob.get("rounds", 0)
+        return {"restored": len(self.pending) + len(self.done), "paused": self.paused}
 
     def stats(self) -> dict:
         return {"rate": self.rate, "pending": len(self.pending), "done": list(self.done),

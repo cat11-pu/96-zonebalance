@@ -14,6 +14,8 @@ ROUTES = {
     "/step": lambda payload: ENGINE.step(),
     "/pause": lambda payload: ENGINE.pause(),
     "/resume": lambda payload: ENGINE.resume(),
+    "/persist": lambda payload: ENGINE.persist(),
+    "/restore": lambda payload: ENGINE.restore(payload["blob"]),
 }
 
 
